@@ -96,33 +96,35 @@
 
 (defn print-compound
   [compound prefix]
-  (let [k (keys compound) v (vals compound) subprefix (str prefix "│ ") n (count k)]
+  (let [ks (keys compound) vs (vals compound) subprefix (str prefix "│ ") n (count ks)]
     (printf "compound[%d]\n" n)
-    (loop [k k v v n n]
-      (if (> n 1)
-        (do
-          (printf "%s├%s: " prefix (first k))
-          (value-printer (first v) subprefix)
-          (recur (rest k) (rest v) (dec n)))
-        (when (> n 0)
-          (do
-            (printf "%s└%s: " prefix (first k))
-            (value-printer (first v) (str prefix "  "))))))))
+    (when (> n 0)
+      (loop [ks ks vs vs]
+        (let [k (first ks) v (first vs) nk (rest ks) nv (rest vs)]
+          (if (empty? nk)
+            (do
+              (printf "%s└%s: " prefix k)
+              (value-printer v (str prefix "  ")))
+            (do
+              (printf "%s├%s: " prefix k)
+              (value-printer v subprefix)
+              (recur nk nv))))))))
 
 (defn print-list
   [list prefix]
   (let [t (:nbt (meta list)) list? (:list (meta list)) subprefix (str prefix "│ ") n (count list)]
     (printf "%s[%d] %d\n" (if list? "list" "array") n t)
-    (loop [list list n n]
-      (if (> n 1)
-        (do
-          (printf "%s├" prefix)
-          (value-printer (first list) subprefix)
-          (recur (rest list) (dec n)))
-        (when (> n 0)
-          (do
-            (printf "%s└" prefix)
-            (value-printer (first list) (str prefix "  ")) (str prefix "  ")))))))
+    (when (> n 0)
+      (loop [list list]
+        (let [v (first list) list (rest list)]
+          (if (empty? list)
+            (do
+              (printf "%s└" prefix)
+              (value-printer v (str prefix "  ")) (str prefix "  "))
+            (do
+              (printf "%s├" prefix)
+              (value-printer v subprefix)
+              (recur list))))))))
 
 (defn print-string
   [s]
