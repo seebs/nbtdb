@@ -15,11 +15,6 @@
     (.get stream data)
     (String. data)))
 
-(defn load-nbt-array [f ^ByteBuffer stream t]
-  (let [l (.getInt stream) s (repeatedly l f)]
-    (doall s)
-    (with-meta s {:list false :nbt t})))
-
 (defn load-nbt-byte-array
   [^ByteBuffer stream]
   (let [l (.getInt stream) data (byte-array l)]
@@ -28,11 +23,17 @@
 
 (defn load-int-array
   [^ByteBuffer stream]
-  (load-nbt-array #(.getInt stream) stream 3))
+  (let [l (.getInt stream) data (int-array l)]
+    (dotimes [n l]
+      (aset-int data n (.getInt stream)))
+    (with-meta (vec data) {:list false :nbt 3})))
 
 (defn load-long-array
   [^ByteBuffer stream]
-  (load-nbt-array #(.getLong stream) stream 4))
+  (let [l (.getInt stream) data (long-array l)]
+    (dotimes [n l]
+      (aset-long data n (.getLong stream)))
+    (with-meta (vec data) {:list false :nbt 4})))
 
 (declare load-value load-named-tag value-loader)
 
@@ -133,7 +134,7 @@
 (defn value-printer
   [v prefix]
   (condp = (type v)
-    clojure.lang.PersistentVector (println prefix "list or array")
+    clojure.lang.PersistentVector (print-list v prefix)
     clojure.lang.PersistentArrayMap (print-compound v prefix)
     clojure.lang.PersistentHashMap (print-compound v prefix)
     clojure.lang.LazySeq (print-list v prefix)
