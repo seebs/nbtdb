@@ -22,7 +22,7 @@
 
 (defn load-nbt-byte-array
   [^ByteBuffer stream]
-  (let [l (.getInt stream) data (byte-array l 1)]
+  (let [l (.getInt stream) data (byte-array l)]
     (.get stream data)
     data))
 
