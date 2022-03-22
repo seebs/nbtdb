@@ -9,11 +9,27 @@
    java.util.zip.GZIPInputStream
    java.util.zip.GZIPOutputStream))
 
-(defn load-nbt-string
-  [^ByteBuffer stream]
-  (let [l (.getShort stream) data (byte-array l)]
-    (.get stream data)
-    (String. data)))
+(defn print-byte
+  [byte]
+  (if (< 31 byte 127)
+    (printf "0x%02x '%c'\n" byte byte)
+    (printf "0x%02x\n" byte)))
+
+(defn print-number
+  [number]
+  (printf "0x%x / %d\n" number number))
+
+(defn print-float
+  [number]
+  (printf "%a / %g\n" number number))
+
+(defn array-loader
+  [array-maker value-getter value-setter nbt-type]
+  (fn [^ByteBuffer stream]
+    (let [l (.getInt stream) data (array-maker l)]
+      (dotimes [n l]
+        (value-setter data n (value-getter stream)))
+      (with-meta (vec data) {:list false :nbt nbt-type}))))
 
 (defn load-nbt-byte-array
   [^ByteBuffer stream]
@@ -21,19 +37,11 @@
     (.get stream data)
     data))
 
-(defn load-int-array
+(defn load-nbt-string
   [^ByteBuffer stream]
-  (let [l (.getInt stream) data (int-array l)]
-    (dotimes [n l]
-      (aset-int data n (.getInt stream)))
-    (with-meta (vec data) {:list false :nbt 3})))
-
-(defn load-long-array
-  [^ByteBuffer stream]
-  (let [l (.getInt stream) data (long-array l)]
-    (dotimes [n l]
-      (aset-long data n (.getLong stream)))
-    (with-meta (vec data) {:list false :nbt 4})))
+  (let [l (.getShort stream) data (byte-array l)]
+    (.get stream data)
+    (String. data)))
 
 (declare load-value load-named-tag value-loader)
 
@@ -49,28 +57,6 @@
         (recur (assoc values name value))
         values))))
 
-(defn value-loader
-  [type]
-  (condp = type
-    1 #(.get %)
-    2 #(.getShort %)
-    3 #(.getInt %)
-    4 #(.getLong %)
-    5 #(.getFloat %)
-    6 #(.getDouble %)
-    7 load-nbt-byte-array
-    8 load-nbt-string
-    9 load-list
-    10 load-compound
-    11 load-int-array
-    12 load-long-array
-    #(prn "oops" type %)))
-
-(defn load-value
-  [t ^ByteBuffer stream]
-  (let [v ((value-loader t) stream)]
-    v))
-
 (defn load-named-tag
   [^ByteBuffer stream]
   (let
@@ -80,20 +66,6 @@
       [type "" nil])))
 
 (declare value-printer)
-
-(defn print-byte
-  [byte]
-  (if (< 31 byte 127)
-    (printf "0x%02x '%c'\n" byte byte)
-    (printf "0x%02x\n" byte)))
-
-(defn print-number
-  [number]
-  (printf "0x%x / %d\n" number number))
-
-(defn print-float
-  [number]
-  (printf "%a / %g\n" number number))
 
 (defn print-compound
   [compound prefix]
@@ -146,6 +118,49 @@
     java.lang.Double (print-float v)
     java.lang.String (print-string v)
     (println "unknown type" (type v))))
+
+(deftype NBT-Type [name load print])
+
+(def NBT-Types
+  [; 0 end
+   (NBT-Type. "end" (fn [^ByteBuffer stream] nil) (fn [] (print "end")))
+   ; 1 byte
+   (NBT-Type. "byte" (fn [^ByteBuffer stream] (.get stream))
+              print-byte)
+   ; 2 short
+   (NBT-Type. "short" (fn [^ByteBuffer stream] (.getShort stream))
+              print-number)
+   ; 3 int
+   (NBT-Type. "int" (fn [^ByteBuffer stream] (.getInt stream))
+              print-number)
+   ; 4 long
+   (NBT-Type. "long" (fn [^ByteBuffer stream] (.getLong stream))
+              print-number)
+   ; 5 float
+   (NBT-Type. "float" (fn [^ByteBuffer stream] (.getFloat stream))
+              print-float)
+   ; 6 double
+   (NBT-Type. "double" (fn [^ByteBuffer stream] (.getDouble stream))
+              print-float)
+   ; 7 byte-array
+   (NBT-Type. "byte-array" load-nbt-byte-array print-list)
+   ; 8 string
+   (NBT-Type. "string" load-nbt-string print-string)
+   ; 9 list
+   (NBT-Type. "list" load-list print-list)
+   ; 10 compound
+   (NBT-Type. "compound" load-compound print-compound)
+   ; 11 int-array
+   (NBT-Type. "int-array" (array-loader int-array #(.getInt %) aset-int 3) print-list)
+   ; 12 long-array
+   (NBT-Type. "long-array" (array-loader long-array #(.getLong %) aset-long 4) print-list)])
+
+(defn value-loader [t] (let [nbt (get NBT-Types (int t))] (.load nbt)))
+
+(defn load-value
+  [t ^ByteBuffer stream]
+  (let [nbt (get NBT-Types (int t))]
+    (let [load (.load nbt)] (load stream))))
 
 (defn -main
   [& args]
