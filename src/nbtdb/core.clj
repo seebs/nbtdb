@@ -1,13 +1,19 @@
 (ns nbtdb.core
   (:gen-class)
   (:require
-   [clojure.java.io :as io])
+   [clojure.java.io :as io]
+   [clojure.tools.cli :refer [parse-opts]])
   (:import
    (java.nio.channels FileChannel)
    (java.nio ByteBuffer)
    (java.nio.file StandardOpenOption)
    java.util.zip.GZIPInputStream
    java.util.zip.GZIPOutputStream))
+
+(def cli-options
+  [["-h" "--help" "Display help"]
+   ["-i" "--interactive" "Interactive shell"]
+   ])
 
 (defn print-byte
   [byte]
@@ -162,11 +168,25 @@
   (let [nbt (get NBT-Types (int t))]
     (let [load (.load nbt)] (load stream))))
 
-(defn -main
-  [& args]
-  (let [data (with-open [gz (-> "resources/sample.dat" io/input-stream GZIPInputStream.)
+(defn load-nbt-file [name]
+  (let [data (with-open [gz (-> name io/input-stream GZIPInputStream.)
                          output (new java.io.ByteArrayOutputStream)]
                (io/copy gz output)
-               (. ByteBuffer (wrap (.toByteArray output))))]
-    (let [[_ _ value] (load-named-tag data)]
-      (value-printer value ""))))
+               (. ByteBuffer (wrap (.toByteArray output))))
+	[_ _ value] (load-named-tag data)]
+	value))
+
+(defn run-nbt-shell [data]
+	(prn "interactive shell goes here")
+	)
+
+(defn -main
+  [& args]
+  (let [cli-data (parse-opts args cli-options) opts (:options cli-data) files (:arguments cli-data) nfiles (count files)]
+    (cond
+      (or (:help opts) (not (== 1 nfiles))) (println "usage: nbtdb [-i] file.nbt")
+      :else (let [nbt-data (load-nbt-file (get files 0))]
+              (cond
+		(:interactive opts) (run-nbt-shell nbt-data)
+		:else (value-printer nbt-data "")
+		      )))))
