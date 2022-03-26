@@ -176,19 +176,21 @@
         [_ _ value] (load-named-tag data)]
     value))
 
-(defn parse-words [input]
-  (loop [input input current nil words [] quoting false backslash false]
+(defn parse-words [original]
+  (loop [input original current nil words [] quoting false backslash false]
     (if (empty? input)
-      (if current
-        (conj words current)
-        words)
+      (cond
+	backslash [nil "unterminated backslash"]
+	quoting [nil "unterminated quote"]
+	current [(conj words current) nil]
+        :else [words nil])
       (let [first (get input 0) rest (subs input 1)]
         (if backslash
           (recur rest (str current first) words quoting false)
           (if quoting
             (condp = first
               \" (recur rest current words false false)
-              \\ (recur rest current words false true)
+              \\ (recur rest current words true true)
               (recur rest (str current first) words true false))
             (condp = first
               \space (if current
@@ -199,10 +201,11 @@
               (recur rest (str current first) words false false))))))))
 
 (defn parse [input]
-  (let [words (parse-words input)]
-    (if (empty? words)
-      (fn [value] value)
-      (let [cmd (first words) args (next words)]
+  (let [[words error] (parse-words input)]
+    (cond
+      error (fn [value] (println "error:" error) value)
+      (empty? words) (fn [value] value)
+      :else (let [cmd (first words) args (next words)]
         (condp = cmd
 	"ls" (fn [value] (value-printer value "" 1) value)
         (fn [value] (println "cmd:" cmd "args:" (str/join ", " args))
