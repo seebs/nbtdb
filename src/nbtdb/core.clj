@@ -2,7 +2,8 @@
   (:gen-class)
   (:require
    [clojure.java.io :as io]
-   [clojure.tools.cli :refer [parse-opts]])
+   [clojure.tools.cli :refer [parse-opts]]
+   [clojure.string :as str])
   (:import
    (java.nio.channels FileChannel)
    (java.nio ByteBuffer)
@@ -12,8 +13,7 @@
 
 (def cli-options
   [["-h" "--help" "Display help"]
-   ["-i" "--interactive" "Interactive shell"]
-   ])
+   ["-i" "--interactive" "Interactive shell"]])
 
 (defn print-byte
   [byte]
@@ -74,35 +74,35 @@
 (declare value-printer)
 
 (defn print-compound
-  [compound prefix]
+  [compound prefix maxdepth]
   (let [ks (keys compound) vs (vals compound) subprefix (str prefix "│ ") n (count ks)]
     (printf "compound[%d]\n" n)
-    (when (> n 0)
+    (when (and (> n 0) (> maxdepth 0))
       (loop [ks ks vs vs]
         (let [k (first ks) v (first vs) nk (rest ks) nv (rest vs)]
           (if (empty? nk)
             (do
               (printf "%s└%s: " prefix k)
-              (value-printer v (str prefix "  ")))
+              (value-printer v (str prefix "  ") (dec maxdepth)))
             (do
               (printf "%s├%s: " prefix k)
-              (value-printer v subprefix)
+              (value-printer v subprefix (dec maxdepth))
               (recur nk nv))))))))
 
 (defn print-list
-  [list prefix]
+  [list prefix maxdepth]
   (let [t (:nbt (meta list)) list? (:list (meta list)) subprefix (str prefix "│ ") n (count list)]
     (printf "%s[%d] %d\n" (if list? "list" "array") n t)
-    (when (> n 0)
+    (when (and (> n 0) (> maxdepth 0))
       (loop [list list]
         (let [v (first list) list (rest list)]
           (if (empty? list)
             (do
               (printf "%s└" prefix)
-              (value-printer v (str prefix "  ")) (str prefix "  "))
+              (value-printer v (str prefix "  ") (dec maxdepth)))
             (do
               (printf "%s├" prefix)
-              (value-printer v subprefix)
+              (value-printer v subprefix (dec maxdepth))
               (recur list))))))))
 
 (defn print-string
@@ -110,12 +110,12 @@
   (printf "\"%s\"\n" s))
 
 (defn value-printer
-  [v prefix]
+  [v prefix maxdepth]
   (condp = (type v)
-    clojure.lang.PersistentVector (print-list v prefix)
-    clojure.lang.PersistentArrayMap (print-compound v prefix)
-    clojure.lang.PersistentHashMap (print-compound v prefix)
-    clojure.lang.LazySeq (print-list v prefix)
+    clojure.lang.PersistentVector (print-list v prefix maxdepth)
+    clojure.lang.PersistentArrayMap (print-compound v prefix maxdepth)
+    clojure.lang.PersistentHashMap (print-compound v prefix maxdepth)
+    clojure.lang.LazySeq (print-list v prefix maxdepth)
     java.lang.Byte (print-byte v)
     java.lang.Short (print-number v)
     java.lang.Integer (print-number v)
@@ -173,12 +173,53 @@
                          output (new java.io.ByteArrayOutputStream)]
                (io/copy gz output)
                (. ByteBuffer (wrap (.toByteArray output))))
-	[_ _ value] (load-named-tag data)]
-	value))
+        [_ _ value] (load-named-tag data)]
+    value))
+
+(defn parse-words [input]
+  (loop [input input current nil words [] quoting false backslash false]
+    (if (empty? input)
+      (if current
+        (conj words current)
+        words)
+      (let [first (get input 0) rest (subs input 1)]
+        (if backslash
+          (recur rest (str current first) words quoting false)
+          (if quoting
+            (condp = first
+              \" (recur rest current words false false)
+              \\ (recur rest current words false true)
+              (recur rest (str current first) words true false))
+            (condp = first
+              \space (if current
+                       (recur rest nil (conj words current) false false)
+                       (recur rest nil words false false))
+              \" (recur rest current words true false)
+              \\ (recur rest current words false true)
+              (recur rest (str current first) words false false))))))))
+
+(defn parse [input]
+  (let [words (parse-words input)]
+    (if (empty? words)
+      (fn [value] value)
+      (let [cmd (first words) args (next words)]
+        (condp = cmd
+	"ls" (fn [value] (value-printer value "" 1) value)
+        (fn [value] (println "cmd:" cmd "args:" (str/join ", " args))
+          value))))))
+
+(defn process [value input]
+  (let [op (parse input)]
+    (op value)))
 
 (defn run-nbt-shell [data]
-	(prn "interactive shell goes here")
-	)
+  (loop [value data]
+    (print "> ")
+    (flush)
+    (let [input (read-line)]
+      (if input
+        (recur (process value input))
+        (println "Goodbye.")))))
 
 (defn -main
   [& args]
@@ -187,6 +228,5 @@
       (or (:help opts) (not (== 1 nfiles))) (println "usage: nbtdb [-i] file.nbt")
       :else (let [nbt-data (load-nbt-file (get files 0))]
               (cond
-		(:interactive opts) (run-nbt-shell nbt-data)
-		:else (value-printer nbt-data "")
-		      )))))
+                (:interactive opts) (run-nbt-shell nbt-data)
+                :else (value-printer nbt-data "" 99))))))
