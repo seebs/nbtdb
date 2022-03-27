@@ -191,7 +191,7 @@
           backslash (recur input (str current c) words quoting false)
           (= c \") (recur input current words (not quoting) backslash)
           (= c \\) (recur input current words quoting true)
-          (and (= c \space) (not quoting)) (recur input nil (if current (conj words current) words) quoting backslash)
+          (and (Character/isSpace c) (not quoting)) (recur input nil (if current (conj words current) words) quoting backslash)
           :else (recur input (str current c) words quoting backslash))))))
 
 (defn parse [input]
