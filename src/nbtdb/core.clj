@@ -178,25 +178,21 @@
 
 ; parse-words divides a line on spaces, but allows quoting; double quotes
 ; prevent spaces from breaking words, backslashes prevent anything from
-; anything. state:
-; 0 unquoted
-; 1 quoted
-; 2 backslash-unquoted
-; 3 backslash-quoted
+; anything.
 (defn parse-words [original]
-  (loop [input original current nil words [] state 0]
+  (loop [input original current nil words [] quoting false backslash false]
     (if (empty? input)
-      (condp < state
-        1 [nil "unterminated backslash"]
-        0 [nil "unterminated quote"]
-        [(if current (conj words current) words) nil])
+      (cond
+        backslash [nil "unterminated backslash"]
+        quoting [nil "unterminated quote"]
+        :else [(if current (conj words current) words) nil])
       (let [c (get input 0) input (subs input 1)]
         (cond
-          (>= state 2) (recur input (str current c) words (- state 2))
-          (= c \") (recur input current words (bit-xor state 1))
-          (= c \\) (recur input current words (bit-or state 2))
-          (and (= c \space) (= state 0)) (recur input nil (if current (conj words current) words) state)
-          :else (recur input (str current c) words state))))))
+          backslash (recur input (str current c) words quoting false)
+          (= c \") (recur input current words (not quoting) backslash)
+          (= c \\) (recur input current words quoting true)
+          (and (= c \space) (not quoting)) (recur input nil (if current (conj words current) words) quoting backslash)
+          :else (recur input (str current c) words quoting backslash))))))
 
 (defn parse [input]
   (let [[words error] (parse-words input)]
