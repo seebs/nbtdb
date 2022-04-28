@@ -13,7 +13,8 @@
 
 (def cli-options
   [["-h" "--help" "Display help"]
-   ["-i" "--interactive" "Interactive shell"]])
+   ["-i" "--interactive" "Interactive shell"]
+   ["-e" "--exec CMD" "Execute command"]])
 
 (defn print-byte
   [byte]
@@ -49,7 +50,7 @@
     (.get stream data)
     (String. data)))
 
-(declare load-value load-named-tag value-loader)
+(declare load-value load-named-tag value-loader NBT-Types)
 
 (defn load-list [^ByteBuffer stream]
   (let [t (.get stream) loader (value-loader t) l (.getInt stream) s (repeatedly l #(loader stream))]
@@ -92,7 +93,7 @@
 (defn print-list
   [list prefix maxdepth]
   (let [t (:nbt (meta list)) list? (:list (meta list)) subprefix (str prefix "│ ") n (count list)]
-    (printf "%s[%d] %d\n" (if list? "list" "array") n t)
+    (printf "%s[%d] %s\n" (if list? "list" "array") n (.name (get NBT-Types (int t))))
     (when (and (> n 0) (> maxdepth 0))
       (loop [list list]
         (let [v (first list) list (rest list)]
@@ -197,26 +198,29 @@
 (defn parse [input]
   (let [[words error] (parse-words input)]
     (cond
-      error (fn [value] (println "error:" error) value)
-      (empty? words) (fn [value] value)
+      error (fn [state] (println "error:" error) state)
+      (empty? words) (fn [state] state)
       :else (let [cmd (first words) args (next words)]
               (condp = cmd
-                "ls" (fn [value] (value-printer value "" 1) value)
-                (fn [value] (println "cmd:" cmd "args:" (str/join ", " args))
-                  value))))))
+                "ls" (fn [state] (value-printer (:value state) "" 1) state)
+                (fn [state] (println "cmd:" cmd "args:" (str/join ", " args))
+                  state))))))
 
-(defn process [value input]
+(defn process [state input]
   (let [op (parse input)]
-    (op value)))
+    (op state)))
 
 (defn run-nbt-shell [data]
-  (loop [value data]
+  (loop [state {:value data}]
     (print "> ")
     (flush)
     (let [input (read-line)]
       (if input
-        (recur (process value input))
+        (recur (process state input))
         (println "Goodbye.")))))
+
+(defn run-nbt-cmd [cmd data]
+  (process {:value data} cmd))
 
 (defn -main
   [& args]
@@ -226,4 +230,5 @@
       :else (let [nbt-data (load-nbt-file (get files 0))]
               (cond
                 (:interactive opts) (run-nbt-shell nbt-data)
+                (:exec opts) (run-nbt-cmd (:exec opts) nbt-data)
                 :else (value-printer nbt-data "" 99))))))
