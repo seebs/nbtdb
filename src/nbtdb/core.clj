@@ -14,7 +14,10 @@
 (def cli-options
   [["-h" "--help" "Display help"]
    ["-i" "--interactive" "Interactive shell"]
-   ["-e" "--exec CMD" "Execute command"]])
+   ["-e" "--exec CMD" "Execute command"
+    :multi true
+    :default []
+    :update-fn conj]])
 
 (defn print-byte
   [byte]
@@ -54,8 +57,7 @@
 
 (defn load-list [^ByteBuffer stream]
   (let [t (.get stream) loader (value-loader t) l (.getInt stream) s (repeatedly l #(loader stream))]
-    (doall s)
-    (with-meta s {:list true :nbt t})))
+    (with-meta (vec s) {:list true :nbt t})))
 
 (defn load-compound [^ByteBuffer stream]
   (loop [values {}]
@@ -112,19 +114,14 @@
 
 (defn value-printer
   [v prefix maxdepth]
-  (condp = (type v)
-    clojure.lang.PersistentVector (print-list v prefix maxdepth)
-    clojure.lang.PersistentArrayMap (print-compound v prefix maxdepth)
-    clojure.lang.PersistentHashMap (print-compound v prefix maxdepth)
-    clojure.lang.LazySeq (print-list v prefix maxdepth)
-    java.lang.Byte (print-byte v)
-    java.lang.Short (print-number v)
-    java.lang.Integer (print-number v)
-    java.lang.Long (print-number v)
-    java.lang.Float (print-float v)
-    java.lang.Double (print-float v)
-    java.lang.String (print-string v)
-    (println "unknown type" (type v))))
+  (cond
+    (map? v) (print-compound v prefix maxdepth)
+    (vector? v) (print-list v prefix maxdepth)
+    (float? v) (print-float v)
+    (= (type v) java.lang.Byte) (print-byte v)
+    (number? v) (print-number v)
+    (string? v) (print-string v)
+    :else (println "unknown type" (type v))))
 
 (deftype NBT-Type [name load print])
 
@@ -181,6 +178,8 @@
 ; prevent spaces from breaking words, backslashes prevent anything from
 ; anything.
 (defn parse-words [original]
+  "divides a line on spaces, yielding space-separated words, but supporting
+  double-quote and backslash"
   (loop [input original current nil words [] quoting false backslash false]
     (if (empty? input)
       (cond
@@ -195,6 +194,27 @@
           (and (Character/isSpace c) (not quoting)) (recur input nil (if current (conj words current) words) quoting backslash)
           :else (recur input (str current c) words quoting backslash))))))
 
+(defn cd-in-vector [state path]
+  "tries to cd into a vector within val"
+  (print "cd in vector not done")
+  state)
+
+(defn cd-in-compound [state path]
+  "tries to cd into a compound within val"
+  (let [new (get (or (:node state) (:value state)) path)]
+    (cond
+      new (assoc state :node new)
+      :else (do (println "path not found") state))))
+
+(defn cd-to-path [state path]
+  "yields a possibly-updated state and may print an error"
+  (let [cur (or (:node state) (:value state))]
+    (cond
+      (map? cur) (cd-in-compound state path)
+      (vector? cur) (cd-in-vector state path)
+      :else (do (println "not on a list/array/compound") state)
+)))
+
 (defn parse [input]
   (let [[words error] (parse-words input)]
     (cond
@@ -202,7 +222,13 @@
       (empty? words) (fn [state] state)
       :else (let [cmd (first words) args (next words)]
               (condp = cmd
-                "ls" (fn [state] (value-printer (:value state) "" 1) state)
+                "ls" (fn [state] (value-printer (or (:node state) (:value state)) "" 1) state)
+		"cd" (fn [state]
+			(cond
+			(> 1 (count args)) (do (println "too many args") state)
+			(= 0 (count args)) (do (println "need an arg") state)
+			:else (let [path (first args)]
+			 (cd-to-path state path))))
                 (fn [state] (println "cmd:" cmd "args:" (str/join ", " args))
                   state))))))
 
@@ -219,8 +245,9 @@
         (recur (process state input))
         (println "Goodbye.")))))
 
-(defn run-nbt-cmd [cmd data]
-  (process {:value data} cmd))
+(defn run-nbt-cmds [cmds data]
+  (loop [cmds cmds state {:value data}]
+    (when (first cmds) (recur (next cmds) (process state (first cmds))))))
 
 (defn -main
   [& args]
@@ -230,5 +257,5 @@
       :else (let [nbt-data (load-nbt-file (get files 0))]
               (cond
                 (:interactive opts) (run-nbt-shell nbt-data)
-                (:exec opts) (run-nbt-cmd (:exec opts) nbt-data)
+                (:exec opts) (run-nbt-cmds (:exec opts) nbt-data)
                 :else (value-printer nbt-data "" 99))))))
