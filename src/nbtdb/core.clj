@@ -31,7 +31,7 @@
 
 (defn print-float
   [number]
-  (printf "%a / %g\n" number number))
+  (printf "%g / %a\n" number number))
 
 (defn array-loader
   [array-maker value-getter value-setter nbt-type]
@@ -195,49 +195,65 @@
           :else (recur input (str current c) words quoting backslash))))))
 
 (defn cd-in-vector [state path]
-  "tries to cd into a vector within val"
-  (print "cd in vector not done")
-  state)
+  "tries to cd into an array or list within val"
+  (let [index (parse-long path) node (get (:node state) index)]
+    (cond
+      node (assoc state :node node)
+      :else (do (println "path not found") state))))
 
 (defn cd-in-compound [state path]
   "tries to cd into a compound within val"
-  (let [new (get (or (:node state) (:value state)) path)]
+  (let [node (get (:node state) path)]
     (cond
-      new (assoc state :node new)
+      node (assoc state :node node)
       :else (do (println "path not found") state))))
 
 (defn cd-to-path [state path]
   "yields a possibly-updated state and may print an error"
-  (let [cur (or (:node state) (:value state))]
+  (let [node (:node state)]
     (cond
-      (map? cur) (cd-in-compound state path)
-      (vector? cur) (cd-in-vector state path)
-      :else (do (println "not on a list/array/compound") state)
-)))
+      (map? node) (cd-in-compound state path)
+      (vector? node) (cd-in-vector state path)
+      :else (do (println "not on a list/array/compound") state))))
+
+(defn cmd-cd [state opts args]
+  (cond
+    (> 1 (count args)) (do (println "too many args") state)
+    (= 0 (count args)) (do (println "need an arg") state)
+    :else (let [path (first args)]
+            (cd-to-path state path))))
+
+; a command has a name, a parse-opts style option list, and a function.
+(defrecord command [opts func])
+
+(defn cmd-ls [state opts args]
+  (value-printer (:node state) "" 1)
+  state)
+
+(defn cmd-error [state name]
+  (println "unknown command:" name)
+  state)
+
+(def commands {"cd" (->command [] cmd-cd)
+               "ls" (->command [] cmd-ls)})
 
 (defn parse [input]
   (let [[words error] (parse-words input)]
     (cond
       error (fn [state] (println "error:" error) state)
       (empty? words) (fn [state] state)
-      :else (let [cmd (first words) args (next words)]
-              (condp = cmd
-                "ls" (fn [state] (value-printer (or (:node state) (:value state)) "" 1) state)
-		"cd" (fn [state]
-			(cond
-			(> 1 (count args)) (do (println "too many args") state)
-			(= 0 (count args)) (do (println "need an arg") state)
-			:else (let [path (first args)]
-			 (cd-to-path state path))))
-                (fn [state] (println "cmd:" cmd "args:" (str/join ", " args))
-                  state))))))
+      :else (let [cmd-name (first words) cmd (get commands cmd-name) args (next words)]
+              (if cmd
+                (let [cli-data (parse-opts args (get cmd :opts)) opts (:options cli-data) args (:arguments cli-data)]
+                  (fn [state] ((get cmd :func) state opts args)))
+                (fn [state] (cmd-error state cmd-name)))))))
 
 (defn process [state input]
   (let [op (parse input)]
     (op state)))
 
-(defn run-nbt-shell [data]
-  (loop [state {:value data}]
+(defn run-nbt-shell [state]
+  (loop [state state]
     (print "> ")
     (flush)
     (let [input (read-line)]
@@ -245,17 +261,21 @@
         (recur (process state input))
         (println "Goodbye.")))))
 
-(defn run-nbt-cmds [cmds data]
-  (loop [cmds cmds state {:value data}]
-    (when (first cmds) (recur (next cmds) (process state (first cmds))))))
+(defn run-nbt-cmds [cmds state]
+  (when (first cmds) (recur (next cmds) (process state (first cmds)))))
+
+(defn state-from-data [data]
+  {:tree data
+   :node data
+   :path []})
 
 (defn -main
   [& args]
   (let [cli-data (parse-opts args cli-options) opts (:options cli-data) files (:arguments cli-data) nfiles (count files)]
     (cond
       (or (:help opts) (not (== 1 nfiles))) (println "usage: nbtdb [-i] file.nbt")
-      :else (let [nbt-data (load-nbt-file (get files 0))]
+      :else (let [nbt-data (state-from-data (load-nbt-file (get files 0)))]
               (cond
                 (:interactive opts) (run-nbt-shell nbt-data)
                 (:exec opts) (run-nbt-cmds (:exec opts) nbt-data)
-                :else (value-printer nbt-data "" 99))))))
+                :else (value-printer (:value nbt-data) "" 99))))))
