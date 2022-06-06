@@ -244,7 +244,7 @@
       (empty? words) (fn [state] state)
       :else (let [cmd-name (first words) cmd (get commands cmd-name) args (next words)]
               (if cmd
-                (let [cli-data (parse-opts args (get cmd :opts)) opts (:options cli-data) args (:arguments cli-data)]
+                (let [cli-data (parse-opts args (get cmd :opts)) { opts :options args :arguments } cli-data]
                   (fn [state] ((get cmd :func) state opts args)))
                 (fn [state] (cmd-error state cmd-name)))))))
 
@@ -271,7 +271,7 @@
 
 (defn -main
   [& args]
-  (let [cli-data (parse-opts args cli-options) opts (:options cli-data) files (:arguments cli-data) nfiles (count files)]
+  (let [cli-data (parse-opts args cli-options) {opts :options files :arguments} cli-data nfiles (count files)]
     (cond
       (or (:help opts) (not (== 1 nfiles))) (println "usage: nbtdb [-i] file.nbt")
       :else (let [nbt-data (state-from-data (load-nbt-file (get files 0)))]
