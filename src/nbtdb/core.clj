@@ -82,7 +82,7 @@
     (printf "compound[%d]\n" n)
     (when (and (> n 0) (> maxdepth 0))
       (loop [ks ks vs vs]
-        (let [k (first ks) v (first vs) nk (rest ks) nv (rest vs)]
+        (let [[k & nk] ks [v & nv] vs]
           (if (empty? nk)
             (do
               (printf "%s└%s: " prefix k)
@@ -98,7 +98,7 @@
     (printf "%s[%d] %s\n" (if list? "list" "array") n (.name (get NBT-Types (int t))))
     (when (and (> n 0) (> maxdepth 0))
       (loop [list list]
-        (let [v (first list) list (rest list)]
+        (let [[v & list] list]
           (if (empty? list)
             (do
               (printf "%s└" prefix)
@@ -234,15 +234,20 @@
   (println "unknown command:" name)
   state)
 
+(defn cmd-show [state opts args]
+  (value-printer (:node state) "" (:depth opts))
+  state)
+
 (def commands {"cd" (->command [] cmd-cd)
-               "ls" (->command [] cmd-ls)})
+               "ls" (->command [] cmd-ls)
+	       "show" (->command [["-d" "--depth CMD" "max depth" :default 99 :parse-fn #(Integer/parseInt %)]] cmd-show)})
 
 (defn parse [input]
   (let [[words error] (parse-words input)]
     (cond
       error (fn [state] (println "error:" error) state)
       (empty? words) (fn [state] state)
-      :else (let [cmd-name (first words) cmd (get commands cmd-name) args (next words)]
+      :else (let [[cmd-name & args] words cmd (get commands cmd-name)]
               (if cmd
                 (let [cli-data (parse-opts args (get cmd :opts)) { opts :options args :arguments } cli-data]
                   (fn [state] ((get cmd :func) state opts args)))
@@ -277,5 +282,5 @@
       :else (let [nbt-data (state-from-data (load-nbt-file (get files 0)))]
               (cond
                 (:interactive opts) (run-nbt-shell nbt-data)
-                (:exec opts) (run-nbt-cmds (:exec opts) nbt-data)
-                :else (value-printer (:value nbt-data) "" 99))))))
+                (> (count (:exec opts)) 0) (run-nbt-cmds (:exec opts) nbt-data)
+                :else (value-printer (:tree nbt-data) "" 99))))))
