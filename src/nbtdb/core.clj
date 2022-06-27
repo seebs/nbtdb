@@ -97,16 +97,16 @@
   (let [t (:nbt (meta list)) list? (:list (meta list)) subprefix (str prefix "│ ") n (count list)]
     (printf "%s[%d] %s\n" (if list? "list" "array") n (.name (get NBT-Types (int t))))
     (when (and (> n 0) (> maxdepth 0))
-      (loop [list list]
+      (loop [list list k 0]
         (let [[v & list] list]
           (if (empty? list)
             (do
-              (printf "%s└" prefix)
+              (printf "%s└[%d]: " prefix k)
               (value-printer v (str prefix "  ") (dec maxdepth)))
             (do
-              (printf "%s├" prefix)
+              (printf "%s├[%d]: " prefix k)
               (value-printer v subprefix (dec maxdepth))
-              (recur list))))))))
+              (recur list (inc k)))))))))
 
 (defn print-string
   [s]
@@ -127,7 +127,7 @@
 
 (def NBT-Types
   [; 0 end
-   (NBT-Type. "end" (fn [^ByteBuffer stream] nil) (fn [] (print "end")))
+   (NBT-Type. "end" (fn [^ByteBuffer _] nil) (fn [] (print "end")))
    ; 1 byte
    (NBT-Type. "byte" (fn [^ByteBuffer stream] (.get stream))
               print-byte)
@@ -163,8 +163,8 @@
 
 (defn load-value
   [t ^ByteBuffer stream]
-  (let [nbt (get NBT-Types (int t))]
-    (let [load (.load nbt)] (load stream))))
+  (let [nbt (get NBT-Types (int t)) load (.load nbt)]
+    (load stream)))
 
 (defn load-nbt-file [name]
   (let [data (with-open [gz (-> name io/input-stream GZIPInputStream.)
@@ -177,9 +177,10 @@
 ; parse-words divides a line on spaces, but allows quoting; double quotes
 ; prevent spaces from breaking words, backslashes prevent anything from
 ; anything.
-(defn parse-words [original]
+(defn parse-words
   "divides a line on spaces, yielding space-separated words, but supporting
   double-quote and backslash"
+   [original]
   (loop [input original current nil words [] quoting false backslash false]
     (if (empty? input)
       (cond
@@ -194,52 +195,77 @@
           (and (Character/isSpace c) (not quoting)) (recur input nil (if current (conj words current) words) quoting backslash)
           :else (recur input (str current c) words quoting backslash))))))
 
-(defn cd-in-vector [state path]
+(defn cd-in-vector
   "tries to cd into an array or list within val"
-  (let [index (parse-long path) node (get (:node state) index)]
+  [state path]
+  (let [index (parse-long path) node (get (first (:nodes state)) index)]
     (cond
-      node (assoc state :node node)
+      node (update state :nodes conj node)
       :else (do (println "path not found") state))))
 
-(defn cd-in-compound [state path]
+(defn cd-in-compound 
   "tries to cd into a compound within val"
-  (let [node (get (:node state) path)]
+  [state path]
+  (let [node (get (first (:nodes state)) path)]
     (cond
-      node (assoc state :node node)
+      node (update state :nodes conj node)
       :else (do (println "path not found") state))))
 
-(defn cd-to-path [state path]
+(defn cd-to-path
   "yields a possibly-updated state and may print an error"
-  (let [node (:node state)]
+  [state path]
+  (let [node (first (:nodes state))]
     (cond
       (map? node) (cd-in-compound state path)
       (vector? node) (cd-in-vector state path)
       :else (do (println "not on a list/array/compound") state))))
 
-(defn cmd-cd [state opts args]
+(defn follow-path
+  "follow a path from the top of a tree, yielding a node"
+  [tree path]
+  (loop [node tree [next & remaining] path]
+    (if next
+      (let [node (cd-to-path node next)]
+        (recur node remaining))
+      node
+      )))
+  
+(defn resolve-path
+  "resolve a path within a state, yielding a new state"
+  [state path]
+  state)
+
+(defn cmd-cd [state _ args]
   (cond
     (> 1 (count args)) (do (println "too many args") state)
     (= 0 (count args)) (do (println "need an arg") state)
     :else (let [path (first args)]
             (cd-to-path state path))))
 
+(defn cmd-wtf [state _ _]
+  (prn "nodes:" (:nodes state))
+  (prn "path:" (:path state))
+  state
+  )
+
 ; a command has a name, a parse-opts style option list, and a function.
 (defrecord command [opts func])
 
-(defn cmd-ls [state opts args]
-  (value-printer (:node state) "" 1)
+(defn cmd-ls [state _ _]
+  (value-printer (first (:nodes state)) "" 1)
   state)
 
 (defn cmd-error [state name]
   (println "unknown command:" name)
   state)
 
-(defn cmd-show [state opts args]
-  (value-printer (:node state) "" (:depth opts))
+(defn cmd-show [state opts _]
+  (value-printer (first (:nodes state)) "" (:depth opts))
   state)
 
 (def commands {"cd" (->command [] cmd-cd)
                "ls" (->command [] cmd-ls)
+               "wtf" (->command [] cmd-wtf)
 	       "show" (->command [["-d" "--depth CMD" "max depth" :default 99 :parse-fn #(Integer/parseInt %)]] cmd-show)})
 
 (defn parse [input]
@@ -271,7 +297,7 @@
 
 (defn state-from-data [data]
   {:tree data
-   :node data
+   :nodes (list data)
    :path []})
 
 (defn -main
