@@ -195,12 +195,16 @@
           (and (Character/isSpace c) (not quoting)) (recur input nil (if current (conj words current) words) quoting backslash)
           :else (recur input (str current c) words quoting backslash))))))
 
+(defn cd-node-path [state node path]
+  (-> state (update :nodes conj node) (update :path conj path))
+  )
+
 (defn cd-in-vector
   "tries to cd into an array or list within val"
   [state path]
   (let [index (parse-long path) node (get (first (:nodes state)) index)]
     (cond
-      node (update state :nodes conj node)
+      node (cd-node-path state node path)
       :else (do (println "path not found") state))))
 
 (defn cd-in-compound 
@@ -208,7 +212,7 @@
   [state path]
   (let [node (get (first (:nodes state)) path)]
     (cond
-      node (update state :nodes conj node)
+      node (cd-node-path state node path)
       :else (do (println "path not found") state))))
 
 (defn cd-to-path
@@ -216,6 +220,9 @@
   [state path]
   (let [node (first (:nodes state))]
     (cond
+      (= path "..") (if (> (count (:path state)) 0)
+                      (assoc state :nodes (rest (:nodes state)) :path (butlast (:path state)))
+                      state)
       (map? node) (cd-in-compound state path)
       (vector? node) (cd-in-vector state path)
       :else (do (println "not on a list/array/compound") state))))
