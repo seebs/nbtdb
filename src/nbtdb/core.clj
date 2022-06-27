@@ -180,7 +180,7 @@
 (defn parse-words
   "divides a line on spaces, yielding space-separated words, but supporting
   double-quote and backslash"
-   [original]
+  [original]
   (loop [input original current nil words [] quoting false backslash false]
     (if (empty? input)
       (cond
@@ -206,7 +206,7 @@
       node (cd-node-path state node index)
       :else (do (println "path not found") state))))
 
-(defn cd-in-compound 
+(defn cd-in-compound
   "tries to cd into a compound within val"
   [state path]
   (let [node (get (first (:nodes state)) path)]
@@ -219,27 +219,16 @@
   [state path]
   (let [node (first (:nodes state))]
     (cond
-      (= path "..") (if (> (count (:path state)) 0)
-                      (assoc state :nodes (rest (:nodes state)) :path (butlast (:path state)))
-                      state)
-      (map? node) (cd-in-compound state path)
-      (vector? node) (cd-in-vector state path)
-      :else (do (println "not on a list/array/compound") state))))
-
-(defn follow-path
-  "follow a path from the top of a tree, yielding a node"
-  [tree path]
-  (loop [node tree [next & remaining] path]
-    (if next
-      (let [node (cd-to-path node next)]
-        (recur node remaining))
-      node
-      )))
-  
-(defn resolve-path
-  "resolve a path within a state, yielding a new state"
-  [state path]
-  state)
+      (= path "..")
+      (if (> (count (:path state)) 0)
+        (assoc state :nodes (rest (:nodes state)) :path (butlast (:path state)))
+        state)
+      (map? node)
+      (cd-in-compound state path)
+      (vector? node)
+      (cd-in-vector state path)
+      :else
+      (do (println "not on a list/array/compound") state))))
 
 (defn cmd-cd [state _ args]
   (cond
@@ -247,8 +236,6 @@
     (= 0 (count args)) (do (println "need an arg") state)
     :else (let [path (first args)]
             (cd-to-path state path))))
-
-
 
 ; a command has a name, a parse-opts style option list, and a function.
 (defrecord command [opts func])
@@ -273,7 +260,7 @@
 (def commands {"cd" (->command [] cmd-cd)
                "ls" (ro-cmd [] cmd-ls)
                "pwd" (ro-cmd [] cmd-pwd)
-	       "show" (ro-cmd [["-d" "--depth CMD" "max depth" :default 99 :parse-fn #(Integer/parseInt %)]] cmd-show)})
+               "show" (ro-cmd [["-d" "--depth CMD" "max depth" :default 99 :parse-fn #(Integer/parseInt %)]] cmd-show)})
 
 (defn parse [input]
   (let [[words error] (parse-words input)]
@@ -282,7 +269,7 @@
       (empty? words) (fn [state] state)
       :else (let [[cmd-name & args] words cmd (get commands cmd-name)]
               (if cmd
-                (let [cli-data (parse-opts args (get cmd :opts)) { opts :options args :arguments } cli-data]
+                (let [cli-data (parse-opts args (get cmd :opts)) {opts :options args :arguments} cli-data]
                   (fn [state] ((get cmd :func) state opts args)))
                 (fn [state] (cmd-error state cmd-name)))))))
 
