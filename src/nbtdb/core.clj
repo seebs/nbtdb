@@ -196,15 +196,14 @@
           :else (recur input (str current c) words quoting backslash))))))
 
 (defn cd-node-path [state node path]
-  (-> state (update :nodes conj node) (update :path conj path))
-  )
+  (-> state (update :nodes conj node) (update :path conj path)))
 
 (defn cd-in-vector
   "tries to cd into an array or list within val"
   [state path]
   (let [index (parse-long path) node (get (first (:nodes state)) index)]
     (cond
-      node (cd-node-path state node path)
+      node (cd-node-path state node index)
       :else (do (println "path not found") state))))
 
 (defn cd-in-compound 
@@ -249,31 +248,32 @@
     :else (let [path (first args)]
             (cd-to-path state path))))
 
-(defn cmd-wtf [state _ _]
-  (prn "nodes:" (:nodes state))
-  (prn "path:" (:path state))
-  state
-  )
+
 
 ; a command has a name, a parse-opts style option list, and a function.
 (defrecord command [opts func])
 
+(defn ro-cmd [opts func]
+  (->command opts (fn [state o a] (func state o a) state)))
+
 (defn cmd-ls [state _ _]
-  (value-printer (first (:nodes state)) "" 1)
-  state)
+  (value-printer (first (:nodes state)) "" 1))
+
+(defn cmd-pwd [state _ _]
+  (print "/")
+  (println (str/join "/" (:path state))))
 
 (defn cmd-error [state name]
   (println "unknown command:" name)
   state)
 
 (defn cmd-show [state opts _]
-  (value-printer (first (:nodes state)) "" (:depth opts))
-  state)
+  (value-printer (first (:nodes state)) "" (:depth opts)))
 
 (def commands {"cd" (->command [] cmd-cd)
-               "ls" (->command [] cmd-ls)
-               "wtf" (->command [] cmd-wtf)
-	       "show" (->command [["-d" "--depth CMD" "max depth" :default 99 :parse-fn #(Integer/parseInt %)]] cmd-show)})
+               "ls" (ro-cmd [] cmd-ls)
+               "pwd" (ro-cmd [] cmd-pwd)
+	       "show" (ro-cmd [["-d" "--depth CMD" "max depth" :default 99 :parse-fn #(Integer/parseInt %)]] cmd-show)})
 
 (defn parse [input]
   (let [[words error] (parse-words input)]
