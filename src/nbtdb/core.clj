@@ -92,9 +92,9 @@
 
 (defn save-compound
   [^ByteBuffer stream data]
-  (prn "save-compound" data)
   (doseq [[k v] (seq data)]
-    (save-named-tag stream k v)))
+    (save-named-tag stream k v))
+  (.writeByte stream 0))
 
 (defn load-named-tag
   [^ByteBuffer stream]
