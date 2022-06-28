@@ -33,6 +33,8 @@
   [number]
   (printf "%g / %a\n" number number))
 
+(declare load-value save-value load-named-tag save-named-tag value-loader value-saver find-nbt-type NBT-Types)
+
 (defn array-loader
   [array-maker value-getter value-setter nbt-type]
   (fn [^ByteBuffer stream]
@@ -41,11 +43,28 @@
         (value-setter data n (value-getter stream)))
       (with-meta (vec data) {:list false :nbt nbt-type}))))
 
+(defn array-saver
+  [data value-putter nbt-type]
+    (fn [^ByteBuffer stream]
+      (.writeInt stream (alength data))
+      (.writeByte stream nbt-type)
+      (doseq [v data] (value-putter stream v))))
+
 (defn load-nbt-byte-array
   [^ByteBuffer stream]
   (let [l (.getInt stream) data (byte-array l)]
     (.get stream data)
     data))
+
+(defn save-nbt-byte-array
+  [^ByteBuffer stream v]
+  (.writeInt stream (alength v))
+  (.write stream v 0 (alength v)))
+
+(defn save-nbt-string
+  [^ByteBuffer stream v]
+  (.writeShort stream (.length v))
+  (.writeBytes stream v))
 
 (defn load-nbt-string
   [^ByteBuffer stream]
@@ -53,7 +72,12 @@
     (.get stream data)
     (String. data)))
 
-(declare load-value load-named-tag value-loader NBT-Types)
+(defn save-list
+  [^ByteBuffer stream data]
+  (let [t (:nbt (meta data)) saver (value-saver t) l (count data)]
+    (.writeByte stream t)
+    (.writeInt stream l)
+    (doseq [v data] (saver stream v))))
 
 (defn load-list [^ByteBuffer stream]
   (let [t (.get stream) loader (value-loader t) l (.getInt stream) s (repeatedly l #(loader stream))]
@@ -66,6 +90,12 @@
         (recur (assoc values name value))
         values))))
 
+(defn save-compound
+  [^ByteBuffer stream data]
+  (prn "save-compound" data)
+  (doseq [[k v] (seq data)]
+    (save-named-tag stream k v)))
+
 (defn load-named-tag
   [^ByteBuffer stream]
   (let
@@ -73,6 +103,14 @@
     (if (> type 0)
       [type (load-nbt-string stream) (load-value type stream)]
       [type "" nil])))
+
+(defn save-named-tag
+  [^ByteBuffer stream name v]
+  (let [t (find-nbt-type v)]
+    (.writeByte stream t)
+    (when (> t 0)
+      (save-nbt-string stream name)
+      (save-value t stream v))))
 
 (declare value-printer)
 
@@ -123,48 +161,117 @@
     (string? v) (print-string v)
     :else (println "unknown type" (type v))))
 
-(deftype NBT-Type [name load print])
+(defn find-nbt-type
+  "Find the NBT type of an item"
+  [data]
+  (cond
+    (nil? data) 0
+    (string? data) 8
+    (map? data) 10
+    (vector? data) (if (:list (meta data)) 9 (case (:nbt (meta data)) 1 7 3 11 4 12))
+    (double? data) 6
+    (float? data) 5
+    ; but how to disambiguate byte/short/int/long
+    (= (type data) java.lang.Byte) 1
+    (= (type data) java.lang.Short) 2
+    (= (type data) java.lang.Integer) 3
+    (= (type data) java.lang.Long) 4
+    ))
+
+(deftype NBT-Type [name load save print])
 
 (def NBT-Types
   [; 0 end
-   (NBT-Type. "end" (fn [^ByteBuffer _] nil) (fn [] (print "end")))
+   (NBT-Type.
+     "end"
+    (fn [^ByteBuffer _] nil)
+    (fn [^ByteBuffer _ _] nil)
+    (fn [] (print "end")))
    ; 1 byte
-   (NBT-Type. "byte" (fn [^ByteBuffer stream] (.get stream))
-              print-byte)
+   (NBT-Type.
+    "byte"
+    (fn [^ByteBuffer stream] (.get stream))
+    (fn [^ByteBuffer stream v] (.writeByte stream v))
+    print-byte)
    ; 2 short
-   (NBT-Type. "short" (fn [^ByteBuffer stream] (.getShort stream))
-              print-number)
+   (NBT-Type.
+    "short"
+    (fn [^ByteBuffer stream] (.getShort stream))
+    (fn [^ByteBuffer stream v] (.writeShort stream v))    
+    print-number)
    ; 3 int
-   (NBT-Type. "int" (fn [^ByteBuffer stream] (.getInt stream))
-              print-number)
+   (NBT-Type.
+    "int"
+    (fn [^ByteBuffer stream] (.getInt stream))
+    (fn [^ByteBuffer stream v] (.writeInt stream v))
+    print-number)
    ; 4 long
-   (NBT-Type. "long" (fn [^ByteBuffer stream] (.getLong stream))
-              print-number)
+   (NBT-Type.
+    "long"
+    (fn [^ByteBuffer stream] (.getLong stream))
+    (fn [^ByteBuffer stream v] (.writeLong stream v))      
+    print-number)
    ; 5 float
-   (NBT-Type. "float" (fn [^ByteBuffer stream] (.getFloat stream))
-              print-float)
+   (NBT-Type.
+    "float"
+    (fn [^ByteBuffer stream] (.getFloat stream))
+    (fn [^ByteBuffer stream v] (.writeFloat stream v))
+    print-float)
    ; 6 double
-   (NBT-Type. "double" (fn [^ByteBuffer stream] (.getDouble stream))
-              print-float)
+   (NBT-Type. 
+    "double"
+    (fn [^ByteBuffer stream] (.getDouble stream))
+    (fn [^ByteBuffer stream v] (.writeDouble stream v))    
+    print-float)
    ; 7 byte-array
-   (NBT-Type. "byte-array" load-nbt-byte-array print-list)
+   (NBT-Type. 
+    "byte-array" 
+    load-nbt-byte-array
+    save-nbt-byte-array
+    print-list)
    ; 8 string
-   (NBT-Type. "string" load-nbt-string print-string)
+   (NBT-Type.
+    "string"
+    load-nbt-string
+    save-nbt-string
+    print-string)
    ; 9 list
-   (NBT-Type. "list" load-list print-list)
+   (NBT-Type.
+    "list"
+    load-list
+    save-list
+    print-list)
    ; 10 compound
-   (NBT-Type. "compound" load-compound print-compound)
+   (NBT-Type.
+    "compound"
+    load-compound
+    save-compound
+    print-compound)
    ; 11 int-array
-   (NBT-Type. "int-array" (array-loader int-array #(.getInt %) aset-int 3) print-list)
+   (NBT-Type. 
+    "int-array" 
+    (array-loader int-array #(.getInt %) aset-int 3)
+    (array-saver int-array #(.writeInt %1 %2) 4)
+    print-list)
    ; 12 long-array
-   (NBT-Type. "long-array" (array-loader long-array #(.getLong %) aset-long 4) print-list)])
+   (NBT-Type. 
+    "long-array" 
+    (array-loader long-array #(.getLong %) aset-long 4)
+    (array-saver long-array #(.writeLong %1 %2) 4)
+    print-list)])
 
 (defn value-loader [t] (let [nbt (get NBT-Types (int t))] (.load nbt)))
+(defn value-saver [t] (let [nbt (get NBT-Types (int t))] (.save nbt)))
 
 (defn load-value
   [t ^ByteBuffer stream]
   (let [nbt (get NBT-Types (int t)) load (.load nbt)]
     (load stream)))
+
+(defn save-value
+  [t ^ByteBuffer stream v]
+  (let [nbt (get NBT-Types (int t)) save (.save nbt)]
+    (save stream v)))
 
 (defn load-nbt-file [name]
   (let [data (with-open [gz (-> name io/input-stream GZIPInputStream.)
@@ -173,6 +280,15 @@
                (. ByteBuffer (wrap (.toByteArray output))))
         [_ _ value] (load-named-tag data)]
     value))
+
+(defn save-nbt-file [name data]
+  (with-open [output (-> name io/output-stream GZIPOutputStream. java.io.DataOutputStream.)]
+    (save-named-tag output "" data)))
+
+(defn state-from-data [data]
+  {:tree data
+   :nodes (list data)
+   :path []})
 
 ; parse-words divides a line on spaces, but allows quoting; double quotes
 ; prevent spaces from breaking words, backslashes prevent anything from
@@ -223,10 +339,13 @@
       (if (> (count (:path state)) 0)
         (assoc state :nodes (rest (:nodes state)) :path (butlast (:path state)))
         state)
+
       (map? node)
       (cd-in-compound state path)
+
       (vector? node)
       (cd-in-vector state path)
+
       :else
       (do (println "not on a list/array/compound") state))))
 
@@ -236,6 +355,16 @@
     (= 0 (count args)) (do (println "need an arg") state)
     :else (let [path (first args)]
             (cd-to-path state path))))
+
+(defn cmd-load [state _ args]
+  (if (= (count args) 1)
+  (state-from-data (load-nbt-file (first args)))
+    (do (println "usage: load <file>") state)))
+
+(defn cmd-save [state _ args]
+  (if (= (count args) 1)
+    (save-nbt-file (first args) (:tree state))
+    (do (println "usage: save <file>") state)))
 
 ; a command has a name, a parse-opts style option list, and a function.
 (defrecord command [opts func])
@@ -260,6 +389,8 @@
 (def commands {"cd" (->command [] cmd-cd)
                "ls" (ro-cmd [] cmd-ls)
                "pwd" (ro-cmd [] cmd-pwd)
+               "load" (->command [] cmd-load)
+               "save" (ro-cmd [] cmd-save)
                "show" (ro-cmd [["-d" "--depth CMD" "max depth" :default 99 :parse-fn #(Integer/parseInt %)]] cmd-show)})
 
 (defn parse [input]
@@ -288,11 +419,6 @@
 
 (defn run-nbt-cmds [cmds state]
   (when (first cmds) (recur (next cmds) (process state (first cmds)))))
-
-(defn state-from-data [data]
-  {:tree data
-   :nodes (list data)
-   :path []})
 
 (defn -main
   [& args]
