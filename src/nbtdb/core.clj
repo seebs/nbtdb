@@ -5,9 +5,7 @@
    [clojure.tools.cli :refer [parse-opts]]
    [clojure.string :as str])
   (:import
-   (java.nio.channels FileChannel)
    (java.nio ByteBuffer)
-   (java.nio.file StandardOpenOption)
    java.util.zip.GZIPInputStream
    java.util.zip.GZIPOutputStream))
 
