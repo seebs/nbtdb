@@ -315,7 +315,7 @@
 (defn cd-in-vector
   "tries to cd into an array or list within val"
   [state path]
-  (let [index (parse-long path) node (get (first (:nodes state)) index)]
+  (let [index (if (string? path) (parse-long path) path) node (get (first (:nodes state)) index)]
     (cond
       node (cd-node-path state node index)
       :else (do (println "path not found") state))))
@@ -375,7 +375,9 @@
 
 (defn cmd-pwd [state _ _]
   (print "/")
-  (println (str/join "/" (:path state))))
+  (println (str/join "/" (:path state)))
+  (println "node len" (count (:nodes state)))
+  (println "current node" (first (:nodes state))))
 
 (defn cmd-error [state name]
   (println "unknown command:" name)
@@ -384,11 +386,60 @@
 (defn cmd-show [state opts _]
   (value-printer (first (:nodes state)) "" (:depth opts)))
 
+(defn cmd-cmp [state _ args]
+  (let [other (load-nbt-file (first args))]
+    (if (= (:tree state) other)
+      (println "same")
+      (println "different"))))
+
+(defn rm-in-vector
+  "tries to remove a path from an array or list within val"
+  [node path]
+  (let [index (parse-long path) md (meta node)]
+    (if (> (count node) index -1)
+        (with-meta (into (subvec node 0 index) (subvec node (inc index))) md)
+        (do (printf "%d out of range\n" index) node))))
+
+(defn rm-in-compound
+  "tries to remove a path from a compound within val"
+  [node path]
+  (if (contains? node path)
+    (dissoc node path)
+    (do (printf "no entry %s\n" path) node)))
+
+(defn rm-node
+  "remove an entry from a node"
+  [node path]
+  (cond
+     (map? node)
+     (rm-in-compound node path)
+
+     (vector? node)
+     (rm-in-vector node path)
+
+     :else
+     (do (println "not on a list/array/compound:" (type node)) node)))
+
+(defn refollow-path [tree path]
+  (reduce cd-to-path (state-from-data tree) path))
+
+(defn do-rm [state arg]
+  (let [removed (rm-node (first (:nodes state)) arg)
+        tree (update-in (:tree state) (:path state) (fn [_] removed))]
+        (refollow-path tree (:path state))))
+
+(defn cmd-rm [state _ args]
+  (if (= (count args) 1)
+    (do-rm state (first args))
+    (println "usage: rm <node>")))
+
 (def commands {"cd" (->command [] cmd-cd)
+               "rm" (->command [] cmd-rm)
                "ls" (ro-cmd [] cmd-ls)
                "pwd" (ro-cmd [] cmd-pwd)
                "load" (->command [] cmd-load)
                "save" (ro-cmd [] cmd-save)
+               "cmp" (ro-cmd [] cmd-cmp)
                "show" (ro-cmd [["-d" "--depth CMD" "max depth" :default 99 :parse-fn #(Integer/parseInt %)]] cmd-show)})
 
 (defn parse [input]
