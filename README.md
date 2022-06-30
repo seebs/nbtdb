@@ -45,9 +45,9 @@ a depth, rather than the literal word `depth`.
 * `mv <node> <name>`: Moves the given node. If `name` already exists, and is
   a container, attempts to move the thing into that container. If it already
   exists and is not a container, overwrites it. If it does not already exist,
-  creates it.
+  creates it. (unimplemented)
 * `mkdir <name>`: Create a compound tag with the given name. Only works when
-  the current node is a compound tag.
+  the current node is a compound tag. (unimplemented)
 
 ## Bugs
 
